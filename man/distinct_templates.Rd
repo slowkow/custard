@@ -7,7 +7,7 @@
 distinct_templates(all_templates, templates = 10)
 }
 \arguments{
-\item{all_templates}{A matrix, as returned by \code[custard]{make_templates}}
+\item{all_templates}{A matrix, as returned by \code{\link{make_templates}}}
 
 \item{templates}{An integer.}
 }

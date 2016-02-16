@@ -37,7 +37,7 @@ make_templates <- function(timepoints = 3, magnitude = 1) {
 }
 
 #' Make all possible templates for short time series gene expression data.
-#' @param all_templates A matrix, as returned by \code[custard]{make_templates}
+#' @param all_templates A matrix, as returned by \code{\link{make_templates}}
 #' @param templates An integer.
 #' @return A matrix with one row per time point and one column per template.
 #' @export
