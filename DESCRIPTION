@@ -9,6 +9,9 @@ Description:
   data. Uses a permutation test to find profiles enriched with abundance of
   matching genes. Integrates with Bioconductor packages to perform gene set
   enrichment tests with the results.
+Imports:
+  gtools,
+  parallel
 License: GPL-3
 LazyData: TRUE
 RoxygenNote: 5.0.1
