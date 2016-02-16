@@ -1,0 +1,14 @@
+Package: custard
+Type: Package
+Title: Find overabundant expression profiles in short time series gene expression data
+Version: 0.0.1
+Author: Kamil Slowikowski
+Maintainer: Kamil Slowikowski <kslowikowski@fas.harvard.edu>
+Description:
+  Finds overabundant expression profiles in short time series gene expression
+  data. Uses a permutation test to find profiles enriched with abundance of
+  matching genes. Integrates with Bioconductor packages to perform gene set
+  enrichment tests with the results.
+License: GPL-3
+LazyData: TRUE
+RoxygenNote: 5.0.1

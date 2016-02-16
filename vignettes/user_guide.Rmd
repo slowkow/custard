@@ -1,0 +1,287 @@
+---
+title: "CUSTARD User's Guide"
+author: "Kamil Slowikowski"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+output: html_document
+---
+
+```{r setup, include=FALSE, cache=FALSE}
+library(knitr)
+opts_chunk$set(
+  cache = TRUE,
+  autodep = TRUE,
+  echo = FALSE,
+  warning = FALSE,
+  error = FALSE,
+  message = FALSE,
+  cache.path = "cache/",
+  fig.path = "figures/",
+  concordance = TRUE
+)
+
+library(custard)
+library(ggplot2)
+library(cowplot)
+library(reshape2)
+library(scales)
+library(RColorBrewer)
+
+running_time <- function(n = 50, magnitude = 2, timepoints = 5) {
+  sapply(2:timepoints, function(i) {
+    n ^ 2 * (2 * magnitude + 1) ^ (i - 1)
+  })
+}
+
+plot_template <- function(mat, cus, i = "23", text_size = 6) {
+  d1 <- data.frame(
+    Timepoints = rownames(cus$templates),
+    Template = cus$templates[, i],
+    stringsAsFactors = FALSE
+  )
+  d1$Timepoints <- as.integer(d1$Timepoints)
+  
+  idx <- cus$matches[i, ] > 0
+  
+  scale_factor <- abs(
+    Reduce("-", quantile(mat[5,idx], probs = c(0.025, 0.975)))
+  )
+  d1$Template <- d1$Template / max(scale_factor, 1 / scale_factor)
+  
+  d2 <- melt(mat[, idx], varnames = c("Timepoint", "Gene"))
+  
+  ggplot() +
+    geom_line(
+      data = d2,
+      aes(Timepoint, value, group = Gene),
+      color = "blue", alpha = 0.25
+    ) +
+    geom_line(
+      data = d1,
+      aes(Timepoints, Template, group = 1),
+      size = 2
+    ) +
+    annotate(
+      geom = "text",
+      x = -Inf,
+      y = Inf,
+      vjust = 1.1,
+      hjust = -0.1,
+      size = text_size,
+      label = sprintf(
+        "Template %s\n%s genes\nP = %s",
+        i,
+        scales::comma(sum(idx)),
+        signif(cus$results[i, "BinomP"], 1)
+      )
+    ) +
+    scale_x_discrete(breaks = rownames(mat), labels = rownames(mat)) +
+    labs(x = "Timepoint", y = "Log ratio")
+}
+
+plot_templates <- function(selected_templates, cus = NULL) {
+  timepoints <- nrow(selected_templates)
+  d <- as.data.frame(t(selected_templates))
+  d$Index <- 1:nrow(d)
+  d <- melt(d, id.vars = c("Index"))
+  d$Time <- rep(1:timepoints, each = ncol(selected_templates))
+  
+  ggplot(d, aes(x = Time, y = value)) +
+    facet_wrap(~ Index) +
+    geom_line() +
+    scale_y_continuous(limits = c(-max(abs(d$value)), max(abs(d$value)))) +
+    scale_x_discrete(breaks = pretty_breaks()) +
+    labs(x = "", y = "")
+}
+```
+
+# Introduction
+
+CUSTARD finds pre-defined expression profiles (templates) that are overabundant
+in short time course gene expression data.
+
+The algorithm consists of the following steps:
+
+1. Create a small set of expression profile templates.
+2. Assign genes to each template.
+3. Test each template for enrichment with gene expression profiles.
+
+CUSTARD is an R implementation of the work by Jason Ernst et al. described in:
+
+> Ernst, J., Nau, G. J. & Bar-Joseph, Z. Clustering short time series gene expression data. Bioinformatics 21 Suppl 1, i159–68 (2005). https://www.ncbi.nlm.nih.gov/pubmed/15961453
+
+We have extended the method to meet the specific needs of our analysis, and we
+provide those extensions in the CUSTARD R package.
+
+This document is meant to help new users understand the concepts underlying the
+method.
+
+# Templates
+
+We want to find overabundant expression profiles in a short time series gene
+expression dataset. To do this, we will assume a simple model and create a few
+profiles that will serve as templates.
+
+After each time point, we expect that a gene will do one of the following:
+
+- stay the same
+- increase in expression
+- decrease in expression
+
+In our model, the gene will increase or decrease in discrete units. To better
+understand what the landscape of such a model looks like, let's visualize all
+possible templates with `n = 5` timepoints and allowing `c = 1, 2, 3` units of
+change at each time point:
+
+```{r all_templates_lines, echo=FALSE, fig.height=3, fig.width=8}
+plot_all_templates <- function(timepoints = 5, magnitude = 1) {
+  all_templates <- make_templates(timepoints = timepoints, magnitude = magnitude)
+  d <- as.data.frame(t(all_templates))
+  d$Index <- 1:nrow(d)
+  d <- melt(d, id.vars = c("Index"))
+  d$Time <- rep(1:timepoints, each = ncol(all_templates))
+  ggplot(d, aes(x = Time, y = value, color = factor(Index), group = Index)) +
+    geom_line() +
+    theme(legend.position = "none") +
+    # scale_y_continuous(breaks = seq(min(d$value), max(d$value))) +
+    scale_y_continuous(breaks = pretty_breaks()) +
+    labs(
+      x = "Time point", y = "Log ratio", title = sprintf("c = %d", magnitude)
+    )
+}
+
+cowplot::plot_grid(
+  plot_all_templates(magnitude = 1),
+  plot_all_templates(magnitude = 2),
+  plot_all_templates(magnitude = 3),
+  ncol = 3
+)
+```
+
+At time point 2, notice that the templates under `c = 1` are allowed to stay
+the same as time point 1, increase by one unit, or decrease by one unit. The
+gene has 3 choices at each transition between time points, for a total of
+$3^4 = 81$ distinct templates. 
+
+We can also visualize the 81 templates for `c = 1` as a heatmap:
+
+```{r all_templates_heatmap, fig.height=2, fig.width=8}
+all_templates <- make_templates(timepoints = 5, magnitude = 1)
+par(mar=c(0,0,0,0))
+image(
+  x = t(all_templates)[,nrow(all_templates):1],
+  xaxt = "n",
+  yaxt = "n",
+  frame.plot = FALSE,
+  col = brewer.pal(11, "Spectral")
+)
+```
+
+Use a greedy algorithm to select `m = 10` distinct profiles from the 81
+possibilities when `c = 1`:
+
+```{r distinct_templates, fig.height=6, fig.width=8}
+timepoints <- 5
+all_templates <- make_templates(timepoints = timepoints, magnitude = 1)
+selected_templates <- distinct_templates(all_templates, templates = 10)
+
+plot_templates(selected_templates)
+```
+
+Running time of template selection algorithm:
+
+```{r running_time}
+maxt <- 12
+d <- melt(data.frame(
+  Timepoints = 2:maxt,
+  "c = 1" = running_time(n = 50, magnitude = 1, timepoints = maxt),
+  "c = 2" = running_time(n = 50, magnitude = 2, timepoints = maxt),
+  "c = 3" = running_time(n = 50, magnitude = 3, timepoints = maxt),
+  check.names = FALSE
+), id.vars = "Timepoints")
+
+ggplot(d, aes(x = Timepoints, y = value, group = variable, color = variable)) +
+  geom_line() +
+  geom_text(
+    data = subset(d, Timepoints == max(d$Timepoints)),
+    aes(label = variable),
+    nudge_y = 0.1, nudge_x = 0.5,
+    size = 5
+  ) +
+  # scale_x_continuous(breaks = 2:8) +
+  scale_x_continuous(breaks = pretty_breaks()) +
+  scale_y_log10(labels = trans_format("log10", math_format(10^.x))) +
+  # scale_y_log10() +
+  theme(legend.position = "none") +
+  labs(
+    x = "Number of time points",
+    y = "Total running time",
+    title = "Running time to generate m = 50 distinct templates"
+  )
+```
+
+# Enrichment
+
+Test enrichment with 5,000 null genes sampled from the uniform distribution
+against 25 templates with `c = 1`:
+
+```{r test_enrichment_code, eval=FALSE, echo=TRUE}
+mat <- matrix(runif(5000 * 5), nrow = 5)
+cus <- custard(mat, templates = 25, magnitude = 1)
+```
+
+```{r test_enrichment}
+set.seed(42)
+mat <- matrix(runif(5000 * 5), nrow = 5)
+colnames(mat) <- paste("G", 1:5000, sep = "")
+rownames(mat) <- 1:5
+mat <- log10(t(apply(mat, 1, function(x) x / mat[1, ])))
+
+# set.seed(42)
+cus <- custard(mat, templates = 25, magnitude = 1)
+
+# The results are the same for unscaled or scaled templates, because
+# we use the Pearson correlation coefficient to match genes to templates.
+
+# set.seed(42)
+# all_templates <- make_templates(timepoints = nrow(mat), magnitude = 1)
+# selected_templates <- distinct_templates(all_templates, templates = 25)
+# # Scale the templates to match the range of 95% of the data.
+# mat_range <- abs(
+#   Reduce("-", quantile(mat[nrow(mat),], probs = c(0.025, 0.975)))
+# )
+# selected_templates <- selected_templates / mat_range
+# 
+# cus2 <- custard(mat, templates = selected_templates)
+# 
+# cus$results <- cus$results[order(rownames(cus$results)), ]
+# cus2$results <- cus2$results[order(rownames(cus2$results)), ]
+
+# plot(-log10(cus$results$BinomP), -log10(cus2$results$BinomP)); abline(0, 1)
+# plot(-log10(cus$results$PermP), -log10(cus2$results$PermP)); abline(0, 1)
+
+ggplot() +
+  geom_point(
+    data = cus$results,
+    aes(Expected, Observed)
+  ) +
+  geom_line(
+    data = cus$binom_qvals,
+    aes(Expected, BinomQ)
+  )
+
+# ggplot(data = cus$results, aes(-log10(PermP), -log10(BinomP))) +
+#   geom_point()
+```
+
+Here is a table of the top 6 templates:
+
+```{r enrichment_test_table}
+kable(head(cus$results))
+```
+
+Let's take a closer look at template 23, the one with the strongest P value:
+
+```{r enrichment_test_template}
+plot_template(mat, cus, "8", text_size = 5) +
+  theme_cowplot(font_size = 16)
+```
